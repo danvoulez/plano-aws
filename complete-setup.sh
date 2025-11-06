@@ -93,6 +93,8 @@ if [[ "$OS_TYPE" == "macos" ]]; then
     # Install Homebrew
     if ! command -v brew &> /dev/null; then
         print_info "Installing Homebrew..."
+        # Note: This runs Homebrew's official installation script from the internet
+        # Review at: https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh
         NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
         
         # Add Homebrew to PATH

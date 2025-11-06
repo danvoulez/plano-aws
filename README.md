@@ -25,6 +25,20 @@ LogLineOS is designed to run autonomously with **ZERO manual intervention**.
 
 ### One-Command Setup (0 to Running in 15 Minutes)
 
+**Option 1: Download and inspect first (recommended for security):**
+```bash
+# Download the script
+curl -fsSL https://raw.githubusercontent.com/danvoulez/plano-aws/main/complete-setup.sh -o complete-setup.sh
+
+# Review the script
+less complete-setup.sh
+
+# Make it executable and run
+chmod +x complete-setup.sh
+./complete-setup.sh
+```
+
+**Option 2: Direct execution (for trusted environments):**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/danvoulez/plano-aws/main/complete-setup.sh | bash
 ```

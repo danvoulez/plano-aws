@@ -61,7 +61,7 @@ jobs:
               --query 'Datapoints[0].Sum' \
               --output text)
 
-            if [ "$ERRORS" != "None" ] && [ $(echo "$ERRORS > 10" | bc -l) -eq 1 ]; then
+            if [ "$ERRORS" != "None" ] && (( $(echo "$ERRORS > 10" | awk '{print ($1 > $2)}') )); then
               echo "⚠️ High error rate detected in $func: $ERRORS errors"
               ERROR_FOUND=true
             fi
@@ -88,7 +88,7 @@ jobs:
               --query 'Datapoints[0].Sum' \
               --output text)
 
-            if [ "$ERRORS" != "None" ] && [ $(echo "$ERRORS > 10" | bc -l) -eq 1 ]; then
+            if [ "$ERRORS" != "None" ] && (( $(echo "$ERRORS > 10" | awk '{print ($1 > $2)}') )); then
               echo "⚠️ High error rate detected in API $api: $ERRORS errors"
               ERROR_FOUND=true
             fi

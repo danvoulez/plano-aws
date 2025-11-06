@@ -107,7 +107,7 @@ fi
 
 print_section "Workflow Syntax Validation"
 
-# Check if yq is installed for YAML validation
+# Check if yq or yamllint is installed for YAML validation
 if command -v yamllint &> /dev/null; then
     print_check "yamllint installed" 0
     
