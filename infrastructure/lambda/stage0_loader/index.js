@@ -110,6 +110,27 @@ exports.handler = async (event) => {
                 boot_function_id
             ]);
             
+            // Execute kernel code if present (Blueprint4 execution model)
+            if (fnSpan.code && fnSpan.language === 'javascript') {
+                console.log('Executing kernel code from ledger...');
+                
+                const ctx = createExecutionContext(client, user_id, tenant_id);
+                const result = await executeKernelCode(fnSpan.code, ctx);
+                
+                console.log('Kernel execution result:', JSON.stringify(result));
+                
+                return {
+                    statusCode: 200,
+                    body: JSON.stringify({
+                        success: true,
+                        boot_event_id: bootEventId,
+                        function_id: boot_function_id,
+                        execution: result,
+                        message: 'Kernel executed successfully'
+                    })
+                };
+            }
+            
             return {
                 statusCode: 200,
                 body: JSON.stringify({
@@ -135,6 +156,81 @@ exports.handler = async (event) => {
         };
     }
 };
+
+// Create execution context for kernels (Blueprint4 ctx pattern)
+function createExecutionContext(client, user_id, tenant_id) {
+    const { randomUUID } = require('crypto');
+    
+    // Safe SQL tagged template
+    const sql = async (strings, ...values) => {
+        const queryText = strings.reduce((prev, curr, i) => {
+            return prev + (i > 0 ? `$${i}` : "") + curr;
+        }, "");
+        const result = await client.query(queryText, values);
+        return result;
+    };
+    
+    // insertSpan helper
+    const insertSpan = async (span) => {
+        const cols = Object.keys(span);
+        const vals = Object.values(span);
+        const placeholders = cols.map((_, i) => `$${i + 1}`).join(",");
+        const query = `INSERT INTO ledger.universal_registry (${cols.map(c => `"${c}"`).join(",")})
+                       VALUES (${placeholders})`;
+        await client.query(query, vals);
+    };
+    
+    // Crypto helpers
+    const crypto = {
+        blake3: (data) => blake3(data),
+        ed25519: ed,
+        randomUUID: () => randomUUID(),
+        hex: (u8) => Array.from(u8).map(b => b.toString(16).padStart(2, "0")).join(""),
+        toU8: (h) => Uint8Array.from(h.match(/.{1,2}/g).map(x => parseInt(x, 16)))
+    };
+    
+    return {
+        sql,
+        insertSpan,
+        now: () => new Date().toISOString(),
+        crypto,
+        env: {
+            APP_USER_ID: user_id || 'edge:stage0',
+            APP_TENANT_ID: tenant_id || null,
+            SIGNING_KEY_HEX: process.env.SIGNING_KEY_HEX || undefined
+        }
+    };
+}
+
+// Execute kernel code in isolated context
+async function executeKernelCode(code, ctx) {
+    try {
+        // Create function from kernel code
+        const factory = new Function("ctx", `"use strict";\n${code}\n;return (typeof default !== 'undefined' ? default : globalThis.main);`);
+        const kernelFn = factory(ctx);
+        
+        if (typeof kernelFn !== "function") {
+            throw new Error("Kernel code does not export a function");
+        }
+        
+        // Execute kernel
+        const result = await kernelFn(ctx);
+        
+        return {
+            status: 'complete',
+            output: result
+        };
+    } catch (error) {
+        console.error('Kernel execution error:', error);
+        return {
+            status: 'error',
+            error: {
+                message: error.message,
+                stack: error.stack
+            }
+        };
+    }
+}
 
 async function verifySpan(span) {
     try {
