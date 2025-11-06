@@ -50,6 +50,7 @@ Thumbs.db
 *.pem
 *.key
 secrets.json
+.env
 
 # Temporary files
 /tmp/
