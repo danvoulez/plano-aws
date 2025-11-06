@@ -125,16 +125,16 @@ def handler(event, context):
             'statusCode': 500,
             'body': json.dumps({
                 'error': 'Memory upsert failed',
-                'message': str(e) if os.environ.get('ENVIRONMENT') != 'production' else 'Internal server error'
+                'message': 'Internal server error' if os.environ.get('ENVIRONMENT') == 'production' else str(e)
             })
         }
     finally:
-        # Return connection to pool
+        # Return connection to pool (errors here shouldn't fail the request)
         if conn:
             try:
                 conn.close()
-            except:
-                pass
+            except Exception as e:
+                print(f"Error returning connection to pool: {str(e)}")
 
 
 def get_db_config():
@@ -183,15 +183,15 @@ def get_db_pool():
     if db_pool:
         # Test if pool is still healthy
         try:
-            conn = db_pool.getconn()
+            conn = pool_obj.getconn()
             db_pool.putconn(conn)
             return db_pool
         except Exception as e:
             print(f'Existing pool unhealthy, recreating: {str(e)}')
             try:
                 db_pool.closeall()
-            except:
-                pass
+            except Exception as close_err:
+                print(f'Error closing pool: {str(close_err)}')
             db_pool = None
     
     # Create new pool

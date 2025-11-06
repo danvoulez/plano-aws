@@ -470,7 +470,9 @@ async function getDbPool(dbConfig) {
             console.warn('Existing pool unhealthy, recreating', { error: error.message });
             try {
                 await dbPool.end();
-            } catch {}
+            } catch (endErr) {
+                console.error('Error closing pool', { error: endErr.message });
+            }
             dbPool = null;
         }
     }
