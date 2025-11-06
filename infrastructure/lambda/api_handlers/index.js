@@ -385,7 +385,7 @@ function createErrorResponse(statusCode, message, details = {}) {
         headers: {
             'Content-Type': 'application/json',
             'X-Request-Time': new Date().toISOString(),
-            'Access-Control-Allow-Origin': '*', // Configure CORS properly
+            'Access-Control-Allow-Origin': getAllowedOrigin(),
             'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type, X-User-Id, X-Tenant-Id'
         },
@@ -405,10 +405,25 @@ function createSuccessResponse(statusCode, data) {
         headers: {
             'Content-Type': 'application/json',
             'X-Request-Time': new Date().toISOString(),
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': getAllowedOrigin(),
             'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type, X-User-Id, X-Tenant-Id'
         },
         body: JSON.stringify(data)
     };
+}
+
+function getAllowedOrigin() {
+    // Configure based on environment
+    const environment = process.env.ENVIRONMENT || 'dev';
+    
+    // In production, use specific origins
+    if (environment === 'production') {
+        const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [];
+        // For now, return first origin or reject
+        return allowedOrigins[0] || 'https://app.loglineos.com';
+    }
+    
+    // In dev/staging, allow all origins
+    return '*';
 }

@@ -334,10 +334,11 @@ function hexToUint8Array(hex) {
  * Validation and sanitization utilities
  */
 
-// UUID validation
+// UUID validation (accepts v4 UUIDs specifically)
 function isValidUUID(uuid) {
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    return uuidRegex.test(uuid);
+    // v4 UUID format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx where y is 8, 9, a, or b
+    const uuidV4Regex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    return uuidV4Regex.test(uuid);
 }
 
 // User ID validation (alphanumeric, colons, hyphens, max 100 chars)

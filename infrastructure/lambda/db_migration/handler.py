@@ -216,7 +216,10 @@ def handler(event, context):
                         dim int DEFAULT 1536,
                         embedding vector(1536),
                         created_at timestamptz DEFAULT now(),
-                        FOREIGN KEY (span_id) REFERENCES ledger.universal_registry(id) ON DELETE CASCADE
+                        CONSTRAINT fk_memory_span 
+                            FOREIGN KEY (span_id) 
+                            REFERENCES ledger.universal_registry(id) 
+                            ON DELETE RESTRICT
                     );
                     
                     CREATE INDEX IF NOT EXISTS mem_emb_tenant_idx 
@@ -337,6 +340,8 @@ def create_error_response(status_code, message, details=None):
     }
     
     if details:
+        # Filter out None values to prevent JSON serialization issues
+        details = {k: v for k, v in details.items() if v is not None}
         response_body.update(details)
     
     return {
