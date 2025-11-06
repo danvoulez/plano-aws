@@ -1,45 +1,100 @@
+"""
+Database Migration Lambda Handler
+
+Executes schema migrations for the LogLineOS ledger system.
+Implements Blueprint4 70-column semantic schema with RLS.
+
+Features:
+- Idempotent migration execution
+- Comprehensive error handling and logging
+- Support for pgvector extension (optional)
+- Automatic kernel seeding from Blueprint4
+
+Security:
+- Credentials from AWS Secrets Manager
+- Parameterized queries
+- Connection timeout handling
+"""
+
 import json
 import boto3
 import psycopg2
 import os
 from datetime import datetime
+import traceback
 
 secrets = boto3.client('secretsmanager')
+logger = None
+
+try:
+    from aws_lambda_powertools import Logger
+    logger = Logger(service="db_migration")
+except ImportError:
+    # Fallback to basic logging
+    import logging
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
 
 def handler(event, context):
     """Execute database migrations for LogLineOS schema"""
     
-    print(f"Starting database migration at {datetime.utcnow().isoformat()}")
+    start_time = datetime.utcnow()
+    request_id = context.request_id if context else 'local'
+    
+    logger.info("Starting database migration", extra={
+        "timestamp": start_time.isoformat(),
+        "request_id": request_id,
+        "environment": os.environ.get('ENVIRONMENT', 'unknown')
+    })
+    
+    conn = None
     
     try:
         # Get DB credentials from Secrets Manager
-        secret = secrets.get_secret_value(SecretId=os.environ['DB_SECRET_ARN'])
-        db_config = json.loads(secret['SecretString'])
+        try:
+            secret_response = secrets.get_secret_value(SecretId=os.environ['DB_SECRET_ARN'])
+            db_config = json.loads(secret_response['SecretString'])
+        except Exception as secret_error:
+            logger.error("Failed to retrieve database credentials", extra={
+                "error": str(secret_error)
+            })
+            return create_error_response(500, "Configuration error")
         
-        # Parse host to remove port if included
+        # Parse connection parameters
         host = db_config['host'].split(':')[0]
         port = int(db_config.get('port', 5432))
+        database = db_config.get('database', 'loglineos')
+        username = db_config.get('username', 'loglineos')
+        password = db_config.get('password')
         
+        logger.info("Connecting to database", extra={
+            "host": host,
+            "port": port,
+            "database": database
+        })
+        
+        # Connect with timeout
         conn = psycopg2.connect(
             host=host,
             port=port,
-            database=db_config['database'],
-            user=db_config['username'],
-            password=db_config['password']
+            database=database,
+            user=username,
+            password=password,
+            connect_timeout=10
         )
         
         conn.autocommit = True
         
         with conn.cursor() as cur:
-            print("Creating schemas...")
-            # Create schemas
+            # Step 1: Create schemas
+            logger.info("Creating schemas")
             cur.execute("""
                 CREATE SCHEMA IF NOT EXISTS app;
                 CREATE SCHEMA IF NOT EXISTS ledger;
             """)
             
-            print("Creating session functions...")
-            # Create session functions for RLS
+            # Step 2: Create session functions for RLS
+            logger.info("Creating RLS session functions")
             cur.execute("""
                 CREATE OR REPLACE FUNCTION app.current_user_id() 
                 RETURNS text LANGUAGE sql STABLE AS 
@@ -50,8 +105,8 @@ def handler(event, context):
                 $$ SELECT current_setting('app.tenant_id', true) $$;
             """)
             
-            print("Creating universal_registry table...")
-            # Create universal_registry with 70 semantic columns
+            # Step 3: Create universal_registry with 70 semantic columns
+            logger.info("Creating universal_registry table with Blueprint4 schema")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS ledger.universal_registry (
                     id            uuid        NOT NULL,
@@ -104,8 +159,8 @@ def handler(event, context):
                 );
             """)
             
-            print("Creating indexes...")
-            # Create indexes
+            # Step 4: Create indexes
+            logger.info("Creating performance indexes")
             cur.execute("""
                 CREATE INDEX IF NOT EXISTS ur_idx_at ON ledger.universal_registry (at DESC);
                 CREATE INDEX IF NOT EXISTS ur_idx_entity ON ledger.universal_registry (entity_type, at DESC);
@@ -114,21 +169,24 @@ def handler(event, context):
                 CREATE INDEX IF NOT EXISTS ur_idx_parent ON ledger.universal_registry (parent_id);
                 CREATE INDEX IF NOT EXISTS ur_idx_related ON ledger.universal_registry USING GIN (related_to);
                 CREATE INDEX IF NOT EXISTS ur_idx_metadata ON ledger.universal_registry USING GIN (metadata);
+                CREATE INDEX IF NOT EXISTS ur_idx_status ON ledger.universal_registry (status) WHERE status IS NOT NULL;
+                CREATE INDEX IF NOT EXISTS ur_idx_entity_status ON ledger.universal_registry (entity_type, status, at DESC);
             """)
             
-            print("Enabling RLS...")
-            # Enable RLS
+            # Step 5: Enable Row-Level Security
+            logger.info("Enabling Row-Level Security")
             cur.execute("""
                 ALTER TABLE ledger.universal_registry ENABLE ROW LEVEL SECURITY;
             """)
             
-            # Drop existing policies if they exist
+            # Drop existing policies if they exist (idempotent)
             cur.execute("""
                 DROP POLICY IF EXISTS ur_select_policy ON ledger.universal_registry;
                 DROP POLICY IF EXISTS ur_insert_policy ON ledger.universal_registry;
             """)
             
             # Create RLS policies
+            logger.info("Creating RLS policies")
             cur.execute("""
                 CREATE POLICY ur_select_policy ON ledger.universal_registry
                 FOR SELECT USING (
@@ -145,69 +203,148 @@ def handler(event, context):
                 );
             """)
             
-            print("Installing pgvector extension...")
-            # Install pgvector for memory system
+            # Step 6: Install pgvector extension (optional, for memory system)
+            logger.info("Installing pgvector extension")
             try:
                 cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
                 
-                print("Creating memory_embeddings table...")
-                # Create memory embeddings table
+                logger.info("Creating memory_embeddings table")
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS ledger.memory_embeddings (
                         span_id uuid PRIMARY KEY,
                         tenant_id text,
                         dim int DEFAULT 1536,
                         embedding vector(1536),
-                        created_at timestamptz DEFAULT now()
+                        created_at timestamptz DEFAULT now(),
+                        CONSTRAINT fk_memory_span 
+                            FOREIGN KEY (span_id) 
+                            REFERENCES ledger.universal_registry(id) 
+                            ON DELETE RESTRICT
                     );
+                    
+                    CREATE INDEX IF NOT EXISTS mem_emb_tenant_idx 
+                    ON ledger.memory_embeddings (tenant_id);
+                    
+                    CREATE INDEX IF NOT EXISTS mem_emb_vector_idx 
+                    ON ledger.memory_embeddings USING ivfflat (embedding vector_cosine_ops)
+                    WITH (lists = 100);
                 """)
-            except Exception as e:
-                print(f"Warning: Could not install pgvector: {e}")
-                print("Memory system will not be available without pgvector extension")
+                logger.info("Memory system tables created successfully")
+            except Exception as pgvector_error:
+                logger.warning("Could not install pgvector extension", extra={
+                    "error": str(pgvector_error)
+                })
+                logger.warning("Memory system will not be available without pgvector")
             
-            print("Creating helper views...")
-            # Create helper view for visible timeline
+            # Step 7: Create helper views
+            logger.info("Creating helper views")
             cur.execute("""
                 CREATE OR REPLACE VIEW ledger.visible_timeline AS
                 SELECT * FROM ledger.universal_registry
                 WHERE is_deleted = false;
             """)
             
-            print("Seeding Blueprint4 kernels and manifest...")
-            # Load and execute Blueprint4 kernel seeds
+            # Step 8: Create append-only enforcement trigger
+            logger.info("Creating append-only enforcement triggers")
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION ledger.enforce_append_only()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    RAISE EXCEPTION 'Updates and deletes are not allowed on append-only ledger';
+                    RETURN NULL;
+                END;
+                $$ LANGUAGE plpgsql;
+                
+                DROP TRIGGER IF EXISTS ur_append_only_trigger ON ledger.universal_registry;
+                
+                CREATE TRIGGER ur_append_only_trigger
+                BEFORE UPDATE OR DELETE ON ledger.universal_registry
+                FOR EACH ROW EXECUTE FUNCTION ledger.enforce_append_only();
+            """)
+            
+            # Step 9: Seed Blueprint4 kernels and manifest (optional)
+            logger.info("Attempting to seed Blueprint4 kernels")
             try:
-                import os
                 seed_path = os.path.join(os.path.dirname(__file__), 'seeds', 'blueprint4_kernels.sql')
                 if os.path.exists(seed_path):
                     with open(seed_path, 'r') as f:
                         seed_sql = f.read()
                     cur.execute(seed_sql)
-                    print("Blueprint4 kernels seeded successfully")
+                    logger.info("Blueprint4 kernels seeded successfully")
                 else:
-                    print(f"Warning: Seed file not found at {seed_path}")
-            except Exception as e:
-                print(f"Warning: Could not seed Blueprint4 kernels: {e}")
+                    logger.warning("Seed file not found", extra={"path": seed_path})
+            except Exception as seed_error:
+                logger.warning("Could not seed Blueprint4 kernels", extra={
+                    "error": str(seed_error)
+                })
                 # Don't fail the migration if seeding fails
         
-        conn.close()
-        print("Database migration completed successfully")
+        # Close connection
+        if conn:
+            conn.close()
+            
+        end_time = datetime.utcnow()
+        duration = (end_time - start_time).total_seconds()
+        
+        logger.info("Database migration completed successfully", extra={
+            "duration_seconds": duration,
+            "end_time": end_time.isoformat()
+        })
         
         return {
             'statusCode': 200,
             'body': json.dumps({
                 'message': 'Migration completed successfully',
-                'timestamp': datetime.utcnow().isoformat()
+                'timestamp': end_time.isoformat(),
+                'duration_seconds': duration,
+                'environment': os.environ.get('ENVIRONMENT', 'unknown')
             })
         }
         
-    except Exception as e:
-        print(f"Error during migration: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return {
-            'statusCode': 500,
-            'body': json.dumps({
-                'error': 'Migration failed',
-                'message': str(e)
-            })
-        }
+    except psycopg2.Error as db_error:
+        logger.error("Database error during migration", extra={
+            "error": str(db_error),
+            "error_code": db_error.pgcode,
+            "traceback": traceback.format_exc()
+        })
+        return create_error_response(500, "Database migration failed", {
+            "error_code": db_error.pgcode
+        })
+        
+    except Exception as error:
+        logger.error("Unexpected error during migration", extra={
+            "error": str(error),
+            "traceback": traceback.format_exc()
+        })
+        return create_error_response(500, "Migration failed", {
+            "error": str(error) if os.environ.get('ENVIRONMENT') != 'production' else None
+        })
+        
+    finally:
+        # Ensure connection is closed
+        if conn and not conn.closed:
+            try:
+                conn.close()
+                logger.info("Database connection closed")
+            except Exception as close_error:
+                logger.error("Error closing database connection", extra={
+                    "error": str(close_error)
+                })
+
+
+def create_error_response(status_code, message, details=None):
+    """Create standardized error response"""
+    response_body = {
+        'error': message,
+        'timestamp': datetime.utcnow().isoformat()
+    }
+    
+    if details:
+        # Filter out None values to prevent JSON serialization issues
+        details = {k: v for k, v in details.items() if v is not None}
+        response_body.update(details)
+    
+    return {
+        'statusCode': status_code,
+        'body': json.dumps(response_body)
+    }

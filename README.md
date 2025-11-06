@@ -273,6 +273,8 @@ make apply ENVIRONMENT=dev
 - 🚀 **[Quick Start Guide](QUICKSTART.md)** - Deploy to AWS in 30 minutes
 - 🏗️ **[Infrastructure Guide](infrastructure/README.md)** - Terraform modules and architecture
 - 📝 **[Implementation Summary](IMPLEMENTATION_SUMMARY.md)** - Technical implementation details
+- ✅ **[Production Readiness](PRODUCTION_READINESS.md)** - Production deployment checklist
+- 🔧 **[Operations Runbook](RUNBOOK.md)** - Operational procedures and incident response
 
 ### Architecture
 - 🌌 **[Complete Architecture](plano-aws.md)** - Full system design and specifications
