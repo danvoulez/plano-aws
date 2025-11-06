@@ -66,7 +66,7 @@ fi
 
 # Test 6: Schemas exist
 print_info "Checking database schemas..."
-SCHEMAS=$(docker-compose exec -T postgres psql -U loglineos -d loglineos -c "\dn" 2>/dev/null | grep -E "app|ledger" | wc -l)
+SCHEMAS=$(docker-compose exec -T postgres psql -U loglineos -d loglineos -t -c "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name IN ('app', 'ledger');" 2>/dev/null | tr -d ' ')
 if [ "$SCHEMAS" -ge 2 ]; then
     print_success "Database schemas (app, ledger) exist"
 else
@@ -76,7 +76,7 @@ fi
 
 # Test 7: universal_registry table exists
 print_info "Checking universal_registry table..."
-if docker-compose exec -T postgres psql -U loglineos -d loglineos -c "\dt ledger.universal_registry" 2>/dev/null | grep -q "universal_registry"; then
+if docker-compose exec -T postgres psql -U loglineos -d loglineos -t -c "SELECT table_name FROM information_schema.tables WHERE table_schema='ledger' AND table_name='universal_registry';" 2>/dev/null | grep -q "universal_registry"; then
     print_success "universal_registry table exists"
 else
     print_error "universal_registry table not found (run: make local-db-init)"

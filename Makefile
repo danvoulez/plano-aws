@@ -30,7 +30,7 @@ install: ## Install all project dependencies (Node.js and Python)
 			(cd "$$dir" && npm install); \
 		elif [ -f "$$dir/requirements.txt" ]; then \
 			echo "  Installing Python dependencies for $$(basename $$dir)..."; \
-			(cd "$$dir" && pip3 install -r requirements.txt); \
+			(cd "$$dir" && pip3 install --user -r requirements.txt); \
 		fi \
 	done
 	@echo "$(GREEN)✓ All dependencies installed$(NC)"

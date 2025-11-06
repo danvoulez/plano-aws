@@ -18,6 +18,9 @@ $$ SELECT current_setting('app.tenant_id', true) $$;
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- Create universal_registry table with 70 semantic columns
+-- Note: UUIDs and sequences are managed by the application layer
+-- The id field expects application-generated UUIDs
+-- The seq field tracks version history per entity
 CREATE TABLE IF NOT EXISTS ledger.universal_registry (
     id            uuid        NOT NULL,
     seq           integer     NOT NULL,

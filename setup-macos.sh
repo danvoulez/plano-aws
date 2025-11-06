@@ -140,7 +140,7 @@ if ! command -v terraform &> /dev/null; then
     brew install hashicorp/tap/terraform
     print_status "Terraform installed"
 else
-    print_status "Terraform $(terraform version -json | jq -r '.terraform_version') already installed"
+    print_status "Terraform already installed"
 fi
 
 # 7. Install PostgreSQL client tools
