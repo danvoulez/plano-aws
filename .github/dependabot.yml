@@ -1,0 +1,85 @@
+version: 2
+updates:
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "02:00"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # Terraform
+  - package-ecosystem: "terraform"
+    directory: "/infrastructure/terraform"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "02:00"
+    labels:
+      - "dependencies"
+      - "terraform"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # Node.js - Stage 0 Loader
+  - package-ecosystem: "npm"
+    directory: "/infrastructure/lambda/stage0_loader"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "02:00"
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # Node.js - API Handlers
+  - package-ecosystem: "npm"
+    directory: "/infrastructure/lambda/api_handlers"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "02:00"
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # Node.js - Kernel Executor
+  - package-ecosystem: "npm"
+    directory: "/infrastructure/lambda/kernel_executor"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "02:00"
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # Python - Database Migration
+  - package-ecosystem: "pip"
+    directory: "/infrastructure/lambda/db_migration"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "02:00"
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "chore"
+      include: "scope"

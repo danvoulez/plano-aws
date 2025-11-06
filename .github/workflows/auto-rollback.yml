@@ -1,0 +1,130 @@
+name: Auto-Rollback on Failure
+
+on:
+  workflow_run:
+    workflows: ["CD - Deploy to AWS"]
+    types:
+      - completed
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  check-deployment:
+    name: Check Deployment Health
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Determine environment
+        id: env
+        run: |
+          # Extract environment from the workflow run
+          BRANCH="${{ github.event.workflow_run.head_branch }}"
+          if [ "$BRANCH" == "main" ]; then
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          else
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets[format('AWS_ACCESS_KEY_ID_{0}', steps.env.outputs.environment == 'production' && 'PROD' || upper(steps.env.outputs.environment))] }}
+          aws-secret-access-key: ${{ secrets[format('AWS_SECRET_ACCESS_KEY_{0}', steps.env.outputs.environment == 'production' && 'PROD' || upper(steps.env.outputs.environment))] }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Wait for stabilization
+        run: |
+          echo "Waiting 5 minutes for deployment to stabilize..."
+          sleep 300
+      
+      - name: Check Lambda error rate
+        id: lambda_check
+        run: |
+          echo "Checking Lambda error rates..."
+          FUNCTIONS=$(aws lambda list-functions --query "Functions[?starts_with(FunctionName, 'loglineos-')].FunctionName" --output text)
+          
+          ERROR_FOUND=false
+          for func in $FUNCTIONS; do
+            ERRORS=$(aws cloudwatch get-metric-statistics \
+              --namespace AWS/Lambda \
+              --metric-name Errors \
+              --dimensions Name=FunctionName,Value=$func \
+              --statistics Sum \
+              --start-time $(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%S) \
+              --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+              --period 300 \
+              --query 'Datapoints[0].Sum' \
+              --output text)
+            
+            if [ "$ERRORS" != "None" ] && [ $(echo "$ERRORS > 10" | bc -l) -eq 1 ]; then
+              echo "⚠️ High error rate detected in $func: $ERRORS errors"
+              ERROR_FOUND=true
+            fi
+          done
+          
+          echo "error_found=$ERROR_FOUND" >> $GITHUB_OUTPUT
+      
+      - name: Check API Gateway errors
+        id: api_check
+        run: |
+          echo "Checking API Gateway error rates..."
+          APIS=$(aws apigatewayv2 get-apis --query "Items[?starts_with(Name, 'loglineos')].ApiId" --output text)
+          
+          ERROR_FOUND=false
+          for api in $APIS; do
+            ERRORS=$(aws cloudwatch get-metric-statistics \
+              --namespace AWS/ApiGateway \
+              --metric-name 5XXError \
+              --dimensions Name=ApiId,Value=$api \
+              --statistics Sum \
+              --start-time $(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%S) \
+              --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+              --period 300 \
+              --query 'Datapoints[0].Sum' \
+              --output text)
+            
+            if [ "$ERRORS" != "None" ] && [ $(echo "$ERRORS > 10" | bc -l) -eq 1 ]; then
+              echo "⚠️ High error rate detected in API $api: $ERRORS errors"
+              ERROR_FOUND=true
+            fi
+          done
+          
+          echo "error_found=$ERROR_FOUND" >> $GITHUB_OUTPUT
+      
+      - name: Trigger rollback
+        if: steps.lambda_check.outputs.error_found == 'true' || steps.api_check.outputs.error_found == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const environment = '${{ steps.env.outputs.environment }}';
+            console.log(`High error rate detected in ${environment}. Initiating rollback...`);
+            
+            // Create an issue to track the rollback
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 Auto-Rollback Triggered for ${environment}`,
+              body: `Automatic rollback initiated due to high error rates detected after deployment.
+              
+              **Environment:** ${environment}
+              **Workflow Run:** ${{ github.event.workflow_run.html_url }}
+              **Time:** ${new Date().toISOString()}
+              
+              **Next Steps:**
+              1. Review the deployment logs
+              2. Investigate the root cause
+              3. Manual rollback may be required
+              `,
+              labels: ['incident', 'auto-rollback', environment]
+            });
+      
+      - name: Send notification
+        if: steps.lambda_check.outputs.error_found == 'true' || steps.api_check.outputs.error_found == 'true'
+        run: |
+          echo "🚨 ROLLBACK TRIGGERED for ${{ steps.env.outputs.environment }}"
+          echo "High error rates detected. Please investigate immediately."
