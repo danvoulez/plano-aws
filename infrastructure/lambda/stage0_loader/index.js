@@ -1,11 +1,13 @@
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 const { StepFunctionsClient, StartExecutionCommand } = require('@aws-sdk/client-step-functions');
+const { CloudWatchClient, PutMetricDataCommand } = require('@aws-sdk/client-cloudwatch');
 const { Pool } = require('pg');
 const { blake3 } = require('@noble/hashes/blake3');
 const ed = require('@noble/ed25519');
 
 const secretsClient = new SecretsManagerClient({});
 const sfnClient = new StepFunctionsClient({});
+const cloudwatchClient = new CloudWatchClient({});
 
 // Global state for Lambda container reuse (Blueprint4 optimization)
 let dbPool = null;
@@ -159,6 +161,16 @@ exports.handler = async (event) => {
                     duration_ms: duration 
                 });
                 
+                // Emit custom CloudWatch metrics (async, don't wait)
+                publishMetrics('KernelExecution', {
+                    Duration: duration,
+                    Success: result.status === 'complete' ? 1 : 0,
+                    Error: result.status === 'error' ? 1 : 0
+                }, {
+                    FunctionId: boot_function_id,
+                    Runtime: fnSpan.language || 'unknown'
+                }).catch(err => console.error('Failed to publish metrics:', err.message));
+                
                 return createSuccessResponse(200, {
                     success: true,
                     boot_event_id: bootEventId,
@@ -170,6 +182,15 @@ exports.handler = async (event) => {
             }
             
             const duration = Date.now() - startTime;
+            
+            // Emit boot event metrics (async, don't wait)
+            publishMetrics('BootEvent', {
+                Duration: duration,
+                Success: 1
+            }, {
+                FunctionId: boot_function_id
+            }).catch(err => console.error('Failed to publish metrics:', err.message));
+            
             return createSuccessResponse(200, {
                 success: true,
                 boot_event_id: bootEventId,
@@ -485,6 +506,44 @@ async function getDbClient(dbConfig) {
     }
     
     throw new Error(`Failed to acquire database client after 3 attempts: ${lastError.message}`);
+}
+
+// Publish custom CloudWatch metrics (Blueprint4 observability)
+async function publishMetrics(metricName, metrics, dimensions) {
+    try {
+        const namespace = process.env.CLOUDWATCH_NAMESPACE || 'LogLineOS';
+        const metricData = [];
+        
+        // Convert metrics object to CloudWatch format
+        for (const [name, value] of Object.entries(metrics)) {
+            metricData.push({
+                MetricName: `${metricName}_${name}`,
+                Value: value,
+                Unit: name === 'Duration' ? 'Milliseconds' : 'Count',
+                Timestamp: new Date(),
+                Dimensions: Object.entries(dimensions || {}).map(([Name, Value]) => ({ Name, Value }))
+            });
+        }
+        
+        if (metricData.length > 0) {
+            await cloudwatchClient.send(new PutMetricDataCommand({
+                Namespace: namespace,
+                MetricData: metricData
+            }));
+            
+            console.log('Metrics published', { 
+                namespace,
+                metricName,
+                count: metricData.length
+            });
+        }
+    } catch (error) {
+        // Don't fail the request if metrics fail
+        console.error('Failed to publish metrics', { 
+            error: error.message,
+            metricName
+        });
+    }
 }
 
 // Get cached manifest (Blueprint4 optimization - 5 min TTL)
