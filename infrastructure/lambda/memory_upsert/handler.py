@@ -1,17 +1,25 @@
 import json
 import boto3
 import psycopg2
+from psycopg2 import pool
 import os
 from datetime import datetime, timedelta
 import uuid
+import time
 
 secrets = boto3.client('secretsmanager')
+
+# Global connection pool for Lambda container reuse (Blueprint4 optimization)
+db_pool = None
+db_config_cache = {'config': None, 'timestamp': 0}
+DB_CONFIG_CACHE_TTL = 900  # 15 minutes in seconds
 
 def handler(event, context):
     """Upsert memory with optional encryption"""
     
     print(f"Memory upsert invoked: {json.dumps(event)}")
     
+    conn = None
     try:
         # Parse request body
         body = event.get('body', '{}')
@@ -42,20 +50,8 @@ def handler(event, context):
                 'body': json.dumps({'error': 'content is required'})
             }
         
-        # Get database credentials
-        secret = secrets.get_secret_value(SecretId=os.environ['DB_SECRET_ARN'])
-        db_config = json.loads(secret['SecretString'])
-        
-        host = db_config['host'].split(':')[0]
-        port = int(db_config.get('port', 5432))
-        
-        conn = psycopg2.connect(
-            host=host,
-            port=port,
-            database=db_config['database'],
-            user=db_config['username'],
-            password=db_config['password']
-        )
+        # Get database connection from pool with retry
+        conn = get_db_connection()
         
         # Extract user context
         user_id = headers.get('x-user-id', headers.get('X-User-Id', 'anonymous'))
@@ -100,7 +96,6 @@ def handler(event, context):
             result = cur.fetchone()
         
         conn.commit()
-        conn.close()
         
         return {
             'statusCode': 201,
@@ -111,6 +106,17 @@ def handler(event, context):
             })
         }
         
+    except psycopg2.OperationalError as e:
+        print(f"Database connection error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'statusCode': 503,
+            'body': json.dumps({
+                'error': 'Service temporarily unavailable',
+                'message': 'Database connection failed'
+            })
+        }
     except Exception as e:
         print(f"Error in memory upsert: {str(e)}")
         import traceback
@@ -119,6 +125,114 @@ def handler(event, context):
             'statusCode': 500,
             'body': json.dumps({
                 'error': 'Memory upsert failed',
-                'message': str(e)
+                'message': 'Internal server error' if os.environ.get('ENVIRONMENT') == 'production' else str(e)
             })
         }
+    finally:
+        # Return connection to pool (errors here shouldn't fail the request)
+        if conn:
+            try:
+                conn.close()
+            except Exception as e:
+                print(f"Error returning connection to pool: {str(e)}")
+
+
+def get_db_config():
+    """Get database configuration with caching"""
+    global db_config_cache
+    
+    now = time.time()
+    
+    # Return cached config if still valid
+    if db_config_cache['config'] and (now - db_config_cache['timestamp']) < DB_CONFIG_CACHE_TTL:
+        print('Using cached database configuration')
+        return db_config_cache['config']
+    
+    # Fetch fresh config with retry logic
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            print(f'Fetching database credentials (attempt {attempt}/3)')
+            secret = secrets.get_secret_value(SecretId=os.environ['DB_SECRET_ARN'])
+            config = json.loads(secret['SecretString'])
+            
+            # Cache the config
+            db_config_cache = {
+                'config': config,
+                'timestamp': now
+            }
+            
+            print('Database configuration fetched and cached')
+            return config
+        except Exception as e:
+            last_error = e
+            print(f'Failed to retrieve database credentials (attempt {attempt}/3): {str(e)}')
+            
+            if attempt < 3:
+                # Exponential backoff: 0.1s, 0.2s
+                delay = 0.1 * (2 ** (attempt - 1))
+                time.sleep(delay)
+    
+    raise Exception(f'Failed to retrieve database credentials after 3 attempts: {str(last_error)}')
+
+
+def get_db_pool():
+    """Initialize or get database connection pool"""
+    global db_pool
+    
+    if db_pool:
+        # Test if pool is still healthy
+        try:
+            conn = pool_obj.getconn()
+            db_pool.putconn(conn)
+            return db_pool
+        except Exception as e:
+            print(f'Existing pool unhealthy, recreating: {str(e)}')
+            try:
+                db_pool.closeall()
+            except Exception as close_err:
+                print(f'Error closing pool: {str(close_err)}')
+            db_pool = None
+    
+    # Create new pool
+    print('Creating new database connection pool')
+    db_config = get_db_config()
+    
+    host = db_config['host'].split(':')[0]
+    port = int(db_config.get('port', 5432))
+    
+    db_pool = pool.SimpleConnectionPool(
+        1,  # minconn
+        5,  # maxconn (conservative for Lambda)
+        host=host,
+        port=port,
+        database=db_config['database'],
+        user=db_config['username'],
+        password=db_config['password'],
+        connect_timeout=5
+    )
+    
+    return db_pool
+
+
+def get_db_connection():
+    """Get database connection from pool with retry logic"""
+    pool_obj = get_db_pool()
+    
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            print(f'Acquiring database connection (attempt {attempt}/3)')
+            conn = pool_obj.getconn()
+            print('Database connection acquired from pool')
+            return conn
+        except Exception as e:
+            last_error = e
+            print(f'Failed to acquire database connection (attempt {attempt}/3): {str(e)}')
+            
+            if attempt < 3:
+                # Exponential backoff: 0.05s, 0.1s
+                delay = 0.05 * (2 ** (attempt - 1))
+                time.sleep(delay)
+    
+    raise Exception(f'Failed to acquire database connection after 3 attempts: {str(last_error)}')
