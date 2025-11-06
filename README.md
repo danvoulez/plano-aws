@@ -17,6 +17,19 @@
 
 ![LogLineOS Banner](https://via.placeholder.com/1200x400/1a1a1a/00ff88?text=LogLineOS+-+Autonomous+AI+Platform)
 
+---
+
+## 🍎 **New to Mac mini? Start Here!**
+
+Setting up on a fresh Mac mini with no dependencies?
+
+👉 **[Follow the Mac mini Setup Guide →](LOCAL_SETUP.md)**
+
+Or run our automated setup script:
+```bash
+./setup-macos.sh && make dev
+```
+
 </div>
 
 ---
@@ -149,17 +162,41 @@ LogLineOS is a **revolutionary cloud-native operating system** that treats every
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Option 1: Local Development (Mac mini or any macOS)
 
+Perfect for development without AWS costs. **Start here if you're on macOS with no dependencies installed.**
+
+```bash
+# Clone the repository
+git clone https://github.com/danvoulez/plano-aws.git
+cd plano-aws
+
+# Run the setup script (installs Homebrew, Docker, Node.js, Python, AWS CLI, Terraform, etc.)
+./setup-macos.sh
+
+# Start local infrastructure (PostgreSQL + Redis)
+make dev
+
+# Initialize database
+make local-db-init
+```
+
+**📖 Complete Guide:** See [LOCAL_SETUP.md](LOCAL_SETUP.md) for detailed local setup instructions.  
+**⚡ Quick Reference:** See [QUICKREF.md](QUICKREF.md) for common commands.
+
+### Option 2: AWS Deployment
+
+For production or staging environments.
+
+**Prerequisites:**
 ```bash
 ✓ AWS Account with admin access
 ✓ Node.js 18+
 ✓ AWS CLI configured
-✓ Deno runtime installed
+✓ Terraform installed
 ```
 
-### One-Command Deploy
-
+**Deploy:**
 ```bash
 # Clone the repository
 git clone https://github.com/danvoulez/plano-aws.git
@@ -169,29 +206,13 @@ cd plano-aws
 make install
 
 # Deploy to AWS (dev environment)
-make deploy ENVIRONMENT=dev
+cd infrastructure
+make apply ENVIRONMENT=dev
 ```
 
-**That's it!** ☕ Grab a coffee while CDK provisions your infrastructure (~15 minutes).
+**That's it!** ☕ Grab a coffee while Terraform provisions your infrastructure (~15 minutes).
 
-### Local Development
-
-```bash
-# Start local PostgreSQL with pgvector
-make local-db
-
-# Run migrations
-make db-migrate
-
-# Seed initial data (kernels, policies, manifest)
-make db-seed
-
-# Run tests
-make test
-
-# Start developing
-code .
-```
+**📖 AWS Deployment Guide:** See [QUICKSTART.md](QUICKSTART.md) for detailed AWS deployment instructions.
 
 ---
 
@@ -238,6 +259,24 @@ code .
 ![Titan](https://img.shields.io/badge/Amazon_Titan-FF9900?style=for-the-badge&logo=amazon-aws&logoColor=white)
 
 </div>
+
+---
+
+## 📖 Documentation
+
+### Getting Started
+- 🍎 **[Mac mini Local Setup](LOCAL_SETUP.md)** - Complete guide for setting up on macOS with no dependencies
+- ⚡ **[Quick Reference](QUICKREF.md)** - Handy command reference for daily development
+- ✅ **[Deployment Checklist](DEPLOYMENT_CHECKLIST.md)** - Step-by-step deployment verification
+
+### Deployment
+- 🚀 **[Quick Start Guide](QUICKSTART.md)** - Deploy to AWS in 30 minutes
+- 🏗️ **[Infrastructure Guide](infrastructure/README.md)** - Terraform modules and architecture
+- 📝 **[Implementation Summary](IMPLEMENTATION_SUMMARY.md)** - Technical implementation details
+
+### Architecture
+- 🌌 **[Complete Architecture](plano-aws.md)** - Full system design and specifications
+- 🧬 **[Blueprint 4](Blueprint4.md)** - System evolution and kernel design
 
 ---
 
