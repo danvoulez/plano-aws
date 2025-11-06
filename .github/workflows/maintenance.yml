@@ -30,6 +30,9 @@ jobs:
       github.event.schedule == '0 6 * * *' ||
       github.event.inputs.task == 'health-check' ||
       github.event.inputs.task == 'all'
+    permissions:
+      contents: read
+      issues: write
 
     strategy:
       matrix:
@@ -42,8 +45,8 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets[format('AWS_ACCESS_KEY_ID_{0}', matrix.environment == 'production' && 'PROD' || upper(matrix.environment))] }}
-          aws-secret-access-key: ${{ secrets[format('AWS_SECRET_ACCESS_KEY_{0}', matrix.environment == 'production' && 'PROD' || upper(matrix.environment))] }}
+          aws-access-key-id: ${{ matrix.environment == 'dev' && secrets.AWS_ACCESS_KEY_ID_DEV || (matrix.environment == 'staging' && secrets.AWS_ACCESS_KEY_ID_STAGING || secrets.AWS_ACCESS_KEY_ID_PROD) }}
+          aws-secret-access-key: ${{ matrix.environment == 'dev' && secrets.AWS_SECRET_ACCESS_KEY_DEV || (matrix.environment == 'staging' && secrets.AWS_SECRET_ACCESS_KEY_STAGING || secrets.AWS_SECRET_ACCESS_KEY_PROD) }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Check Lambda functions
@@ -97,6 +100,8 @@ jobs:
       github.event.schedule == '0 6 * * *' ||
       github.event.inputs.task == 'backup' ||
       github.event.inputs.task == 'all'
+    permissions:
+      contents: read
 
     strategy:
       matrix:
@@ -106,8 +111,8 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets[format('AWS_ACCESS_KEY_ID_{0}', matrix.environment == 'production' && 'PROD' || upper(matrix.environment))] }}
-          aws-secret-access-key: ${{ secrets[format('AWS_SECRET_ACCESS_KEY_{0}', matrix.environment == 'production' && 'PROD' || upper(matrix.environment))] }}
+          aws-access-key-id: ${{ matrix.environment == 'dev' && secrets.AWS_ACCESS_KEY_ID_DEV || (matrix.environment == 'staging' && secrets.AWS_ACCESS_KEY_ID_STAGING || secrets.AWS_ACCESS_KEY_ID_PROD) }}
+          aws-secret-access-key: ${{ matrix.environment == 'dev' && secrets.AWS_SECRET_ACCESS_KEY_DEV || (matrix.environment == 'staging' && secrets.AWS_SECRET_ACCESS_KEY_STAGING || secrets.AWS_SECRET_ACCESS_KEY_PROD) }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Create RDS snapshot
@@ -145,6 +150,9 @@ jobs:
       github.event.schedule == '0 2 * * 1' ||
       github.event.inputs.task == 'security-scan' ||
       github.event.inputs.task == 'all'
+    permissions:
+      contents: read
+      security-events: write
 
     steps:
       - name: Checkout code
@@ -184,6 +192,9 @@ jobs:
       github.event.schedule == '0 2 * * 1' ||
       github.event.inputs.task == 'dependency-update' ||
       github.event.inputs.task == 'all'
+    permissions:
+      contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout code
@@ -239,6 +250,8 @@ jobs:
     if: |
       github.event.schedule == '0 6 * * *' ||
       github.event.inputs.task == 'all'
+    permissions:
+      contents: read
 
     steps:
       - name: Configure AWS credentials

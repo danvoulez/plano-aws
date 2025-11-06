@@ -14,6 +14,9 @@ jobs:
     name: Check Deployment Health
     runs-on: ubuntu-latest
     if: github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: read
+      issues: write
 
     steps:
       - name: Checkout code
@@ -22,19 +25,28 @@ jobs:
       - name: Determine environment
         id: env
         run: |
-          # Extract environment from the workflow run
+          # Extract environment from the workflow run safely
+          # Using a whitelist approach to prevent code injection
+          # Only known branch names are allowed
           BRANCH="${{ github.event.workflow_run.head_branch }}"
-          if [ "$BRANCH" == "main" ]; then
-            echo "environment=dev" >> $GITHUB_OUTPUT
-          else
-            echo "environment=staging" >> $GITHUB_OUTPUT
-          fi
+          case "$BRANCH" in
+            main)
+              echo "environment=dev" >> $GITHUB_OUTPUT
+              ;;
+            staging)
+              echo "environment=staging" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              # Default to dev for any unknown branch
+              echo "environment=dev" >> $GITHUB_OUTPUT
+              ;;
+          esac
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets[format('AWS_ACCESS_KEY_ID_{0}', steps.env.outputs.environment == 'production' && 'PROD' || upper(steps.env.outputs.environment))] }}
-          aws-secret-access-key: ${{ secrets[format('AWS_SECRET_ACCESS_KEY_{0}', steps.env.outputs.environment == 'production' && 'PROD' || upper(steps.env.outputs.environment))] }}
+          aws-access-key-id: ${{ steps.env.outputs.environment == 'dev' && secrets.AWS_ACCESS_KEY_ID_DEV || (steps.env.outputs.environment == 'staging' && secrets.AWS_ACCESS_KEY_ID_STAGING || secrets.AWS_ACCESS_KEY_ID_PROD) }}
+          aws-secret-access-key: ${{ steps.env.outputs.environment == 'dev' && secrets.AWS_SECRET_ACCESS_KEY_DEV || (steps.env.outputs.environment == 'staging' && secrets.AWS_SECRET_ACCESS_KEY_STAGING || secrets.AWS_SECRET_ACCESS_KEY_PROD) }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Wait for stabilization
