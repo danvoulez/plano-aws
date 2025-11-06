@@ -1,11 +1,20 @@
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 const { StepFunctionsClient, StartExecutionCommand } = require('@aws-sdk/client-step-functions');
-const { Client } = require('pg');
+const { Pool } = require('pg');
 const { blake3 } = require('@noble/hashes/blake3');
 const ed = require('@noble/ed25519');
 
 const secretsClient = new SecretsManagerClient({});
 const sfnClient = new StepFunctionsClient({});
+
+// Global state for Lambda container reuse (Blueprint4 optimization)
+let dbPool = null;
+let dbConfigCache = null;
+let manifestCache = { data: null, timestamp: 0 };
+
+// Cache TTLs (milliseconds)
+const MANIFEST_CACHE_TTL = 5 * 60 * 1000; // 5 minutes per Blueprint4
+const DB_CONFIG_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
 
 /**
  * Stage-0 Loader Lambda Handler
@@ -55,36 +64,11 @@ exports.handler = async (event) => {
             return createErrorResponse(400, 'Invalid tenant_id format');
         }
         
-        // Get database credentials from Secrets Manager with retry
-        let dbConfig;
-        try {
-            const dbSecretResponse = await secretsClient.send(
-                new GetSecretValueCommand({ SecretId: process.env.DB_SECRET_ARN })
-            );
-            dbConfig = JSON.parse(dbSecretResponse.SecretString);
-        } catch (secretError) {
-            console.error('Failed to retrieve database credentials', { error: secretError.message });
-            return createErrorResponse(500, 'Configuration error');
-        }
+        // Get database credentials with caching and retry
+        const dbConfig = await getDbConfig();
         
-        // Connect to database with timeout
-        const client = new Client({
-            host: dbConfig.host.split(':')[0],
-            database: dbConfig.database,
-            user: dbConfig.username,
-            password: dbConfig.password,
-            ssl: { rejectUnauthorized: false },
-            port: parseInt(dbConfig.port || '5432'),
-            connectionTimeoutMillis: 5000,
-            query_timeout: 30000
-        });
-        
-        try {
-            await client.connect();
-        } catch (connError) {
-            console.error('Database connection failed', { error: connError.message });
-            return createErrorResponse(503, 'Service temporarily unavailable');
-        }
+        // Get client from connection pool with retry
+        const client = await getDbClient(dbConfig);
         
         try {
             // Set session variables for RLS - sanitize inputs
@@ -96,15 +80,8 @@ exports.handler = async (event) => {
                 await client.query('SET app.tenant_id = $1', [sanitizedTenantId]);
             }
             
-            // Fetch manifest with error handling
-            const manifestResult = await client.query(`
-                SELECT * FROM ledger.universal_registry 
-                WHERE entity_type='manifest' 
-                  AND is_deleted = false
-                ORDER BY at DESC LIMIT 1
-            `);
-            
-            const manifest = manifestResult.rows[0] || { metadata: {} };
+            // Fetch manifest with caching (Blueprint4 optimization)
+            const manifest = await getCachedManifest(client);
             const allowedBootIds = manifest.metadata?.allowed_boot_ids || [];
             
             // Manifest validation logic
@@ -202,11 +179,14 @@ exports.handler = async (event) => {
             });
             
         } finally {
-            // Always close database connection
-            try {
-                await client.end();
-            } catch (endError) {
-                console.error('Error closing database connection', { error: endError.message });
+            // Release client back to pool (don't end connection - reuse in warm Lambda)
+            if (client && client.release) {
+                try {
+                    client.release();
+                    console.log('Database client released back to pool');
+                } catch (releaseError) {
+                    console.error('Error releasing database client', { error: releaseError.message });
+                }
             }
         }
         
@@ -386,4 +366,174 @@ function createSuccessResponse(statusCode, data) {
         },
         body: JSON.stringify(data)
     };
+}
+
+/**
+ * Battle-Hardening Utilities (Blueprint4-compliant)
+ */
+
+// Get database configuration with caching
+async function getDbConfig() {
+    const now = Date.now();
+    
+    // Return cached config if still valid
+    if (dbConfigCache && (now - dbConfigCache.timestamp) < DB_CONFIG_CACHE_TTL) {
+        console.log('Using cached database configuration');
+        return dbConfigCache.config;
+    }
+    
+    // Fetch fresh config with retry logic
+    let lastError;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            console.log(`Fetching database credentials (attempt ${attempt}/3)`);
+            const dbSecretResponse = await secretsClient.send(
+                new GetSecretValueCommand({ SecretId: process.env.DB_SECRET_ARN })
+            );
+            const config = JSON.parse(dbSecretResponse.SecretString);
+            
+            // Cache the config
+            dbConfigCache = {
+                config,
+                timestamp: now
+            };
+            
+            console.log('Database configuration fetched and cached');
+            return config;
+        } catch (error) {
+            lastError = error;
+            console.error(`Failed to retrieve database credentials (attempt ${attempt}/3)`, { 
+                error: error.message 
+            });
+            
+            if (attempt < 3) {
+                // Exponential backoff: 100ms, 200ms
+                const delay = 100 * Math.pow(2, attempt - 1);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+    }
+    
+    throw new Error(`Failed to retrieve database credentials after 3 attempts: ${lastError.message}`);
+}
+
+// Initialize or get database connection pool
+async function getDbPool(dbConfig) {
+    if (dbPool) {
+        // Test if pool is still healthy
+        try {
+            const client = await dbPool.connect();
+            client.release();
+            return dbPool;
+        } catch (error) {
+            console.warn('Existing pool unhealthy, recreating', { error: error.message });
+            try {
+                await dbPool.end();
+            } catch {}
+            dbPool = null;
+        }
+    }
+    
+    // Create new pool
+    console.log('Creating new database connection pool');
+    dbPool = new Pool({
+        host: dbConfig.host.split(':')[0],
+        database: dbConfig.database,
+        user: dbConfig.username,
+        password: dbConfig.password,
+        ssl: { rejectUnauthorized: false },
+        port: parseInt(dbConfig.port || '5432'),
+        // Pool configuration for Lambda
+        max: 5, // Max connections (conservative for Lambda)
+        min: 1, // Keep at least 1 warm
+        idleTimeoutMillis: 30000, // Close idle connections after 30s
+        connectionTimeoutMillis: 5000, // Connection timeout
+        statement_timeout: 30000, // Query timeout (30s)
+    });
+    
+    // Handle pool errors
+    dbPool.on('error', (err) => {
+        console.error('Unexpected database pool error', { error: err.message });
+    });
+    
+    return dbPool;
+}
+
+// Get database client from pool with retry logic
+async function getDbClient(dbConfig) {
+    const pool = await getDbPool(dbConfig);
+    
+    let lastError;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            console.log(`Acquiring database client (attempt ${attempt}/3)`);
+            const client = await pool.connect();
+            console.log('Database client acquired from pool');
+            return client;
+        } catch (error) {
+            lastError = error;
+            console.error(`Failed to acquire database client (attempt ${attempt}/3)`, { 
+                error: error.message 
+            });
+            
+            if (attempt < 3) {
+                // Exponential backoff: 50ms, 100ms
+                const delay = 50 * Math.pow(2, attempt - 1);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+    }
+    
+    throw new Error(`Failed to acquire database client after 3 attempts: ${lastError.message}`);
+}
+
+// Get cached manifest (Blueprint4 optimization - 5 min TTL)
+async function getCachedManifest(client) {
+    const now = Date.now();
+    
+    // Return cached manifest if still valid
+    if (manifestCache.data && (now - manifestCache.timestamp) < MANIFEST_CACHE_TTL) {
+        console.log('Using cached manifest', { 
+            age_seconds: Math.floor((now - manifestCache.timestamp) / 1000)
+        });
+        return manifestCache.data;
+    }
+    
+    // Fetch fresh manifest
+    console.log('Fetching fresh manifest from ledger');
+    try {
+        const manifestResult = await client.query(`
+            SELECT * FROM ledger.universal_registry 
+            WHERE entity_type='manifest' 
+              AND is_deleted = false
+            ORDER BY at DESC LIMIT 1
+        `);
+        
+        const manifest = manifestResult.rows[0] || { metadata: {} };
+        
+        // Cache the manifest
+        manifestCache = {
+            data: manifest,
+            timestamp: now
+        };
+        
+        console.log('Manifest fetched and cached', { 
+            manifest_id: manifest.id,
+            allowed_boot_ids_count: manifest.metadata?.allowed_boot_ids?.length || 0
+        });
+        
+        return manifest;
+    } catch (error) {
+        console.error('Failed to fetch manifest', { error: error.message });
+        
+        // If we have stale cache, use it as fallback
+        if (manifestCache.data) {
+            console.warn('Using stale manifest cache as fallback', {
+                age_seconds: Math.floor((now - manifestCache.timestamp) / 1000)
+            });
+            return manifestCache.data;
+        }
+        
+        throw error;
+    }
 }
