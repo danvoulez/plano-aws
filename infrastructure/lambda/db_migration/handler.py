@@ -172,6 +172,22 @@ def handler(event, context):
                 SELECT * FROM ledger.universal_registry
                 WHERE is_deleted = false;
             """)
+            
+            print("Seeding Blueprint4 kernels and manifest...")
+            # Load and execute Blueprint4 kernel seeds
+            try:
+                import os
+                seed_path = os.path.join(os.path.dirname(__file__), 'seeds', 'blueprint4_kernels.sql')
+                if os.path.exists(seed_path):
+                    with open(seed_path, 'r') as f:
+                        seed_sql = f.read()
+                    cur.execute(seed_sql)
+                    print("Blueprint4 kernels seeded successfully")
+                else:
+                    print(f"Warning: Seed file not found at {seed_path}")
+            except Exception as e:
+                print(f"Warning: Could not seed Blueprint4 kernels: {e}")
+                # Don't fail the migration if seeding fails
         
         conn.close()
         print("Database migration completed successfully")
