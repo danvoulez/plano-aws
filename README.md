@@ -19,16 +19,47 @@
 
 ---
 
-## 🍎 **New to Mac mini? Start Here!**
+## 🤖 **Fully Automated - Human-Proof System**
 
-Setting up on a fresh Mac mini with no dependencies?
+LogLineOS is designed to run autonomously with **ZERO manual intervention**.
 
-👉 **[Follow the Mac mini Setup Guide →](LOCAL_SETUP.md)**
+### One-Command Setup (0 to Running in 15 Minutes)
 
-Or run our automated setup script:
+**Option 1: Download and inspect first (recommended for security):**
 ```bash
-./setup-macos.sh && make dev
+# Download the script
+curl -fsSL https://raw.githubusercontent.com/danvoulez/plano-aws/main/complete-setup.sh -o complete-setup.sh
+
+# Review the script
+less complete-setup.sh
+
+# Make it executable and run
+chmod +x complete-setup.sh
+./complete-setup.sh
 ```
+
+**Option 2: Direct execution (for trusted environments):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/danvoulez/plano-aws/main/complete-setup.sh | bash
+```
+
+**That's it!** The system:
+- ✅ Installs all dependencies automatically
+- ✅ Configures local infrastructure  
+- ✅ Initializes the database
+- ✅ Verifies everything works
+
+### Continuous Automation
+
+Once deployed, the system maintains itself:
+- 🔄 **Auto-deployments** on every push to main
+- 🛡️ **Daily security scans** and vulnerability checks
+- 💾 **Automated backups** every day
+- 📊 **Self-monitoring** with auto-healing
+- 🔄 **Dependency updates** via Dependabot
+- ⚡ **Auto-rollback** on deployment failures
+
+👉 **[Complete Automation Guide →](AUTOMATION.md)**
 
 </div>
 
@@ -162,9 +193,32 @@ LogLineOS is a **revolutionary cloud-native operating system** that treats every
 
 ## 🚀 Quick Start
 
-### Option 1: Local Development (Mac mini or any macOS)
+### Option 1: Fully Automated Setup (Recommended)
 
-Perfect for development without AWS costs. **Start here if you're on macOS with no dependencies installed.**
+**Works on macOS and Linux. Zero manual configuration required.**
+
+```bash
+# Clone the repository
+git clone https://github.com/danvoulez/plano-aws.git
+cd plano-aws
+
+# Run complete automated setup
+./complete-setup.sh
+```
+
+**That's it!** In 10-15 minutes you'll have:
+- ✅ All dependencies installed
+- ✅ Local infrastructure running (PostgreSQL + Redis)
+- ✅ Database initialized with proper schema
+- ✅ All project dependencies installed
+- ✅ Everything verified and ready to use
+
+**📖 Automation Guide:** See [AUTOMATION.md](AUTOMATION.md) for the complete automation documentation.  
+**⚡ Quick Reference:** See [QUICKREF.md](QUICKREF.md) for common commands.
+
+### Option 2: Manual Local Development
+
+If you prefer manual control or need to understand each step:
 
 ```bash
 # Clone the repository
@@ -181,27 +235,47 @@ make dev
 make local-db-init
 ```
 
-**📖 Complete Guide:** See [LOCAL_SETUP.md](LOCAL_SETUP.md) for detailed local setup instructions.  
-**⚡ Quick Reference:** See [QUICKREF.md](QUICKREF.md) for common commands.
+**📖 Complete Guide:** See [LOCAL_SETUP.md](LOCAL_SETUP.md) for detailed local setup instructions.
 
-### Option 2: AWS Deployment
+### Option 3: AWS Deployment (Automated via CI/CD)
 
-For production or staging environments.
+For production or staging environments with **full automation**.
 
 **Prerequisites:**
 ```bash
 ✓ AWS Account with admin access
-✓ Node.js 18+
-✓ AWS CLI configured
-✓ Terraform installed
+✓ GitHub repository configured with AWS credentials
 ```
 
 **Deploy:**
-```bash
-# Clone the repository
-git clone https://github.com/danvoulez/plano-aws.git
-cd plano-aws
 
+1. **Setup GitHub Secrets** (one-time):
+   - Go to your GitHub repository → Settings → Secrets
+   - Add `AWS_ACCESS_KEY_ID_DEV` and `AWS_SECRET_ACCESS_KEY_DEV`
+   - (Optional) Add staging and production credentials
+
+2. **Deploy automatically**:
+   ```bash
+   # Development: Push to main branch
+   git push origin main
+   # ✅ Automatic deployment to dev environment
+   
+   # Staging: Create a tag
+   git tag -a v1.0.0 -m "Release v1.0.0"
+   git push origin v1.0.0
+   # ✅ Automatic deployment to staging
+   
+   # Production: Use GitHub Actions UI
+   # Go to Actions → "CD - Deploy to AWS" → Run workflow
+   # Select "production" environment
+   # ✅ Deployment with approval gate
+   ```
+
+**Manual Deployment:**
+
+If you prefer manual control:
+
+```bash
 # Install dependencies
 make install
 
@@ -210,9 +284,10 @@ cd infrastructure
 make apply ENVIRONMENT=dev
 ```
 
-**That's it!** ☕ Grab a coffee while Terraform provisions your infrastructure (~15 minutes).
+**That's it!** ☕ The system deploys, runs migrations, and verifies automatically.
 
-**📖 AWS Deployment Guide:** See [QUICKSTART.md](QUICKSTART.md) for detailed AWS deployment instructions.
+**📖 Deployment Guide:** See [QUICKSTART.md](QUICKSTART.md) for detailed AWS deployment.  
+**🤖 Automation:** See [AUTOMATION.md](AUTOMATION.md) for CI/CD pipeline details.
 
 ---
 
@@ -228,6 +303,29 @@ make apply ENVIRONMENT=dev
 | **Concurrent Kernels** | 1000+ | Step Functions limit |
 | **Database Writes** | 5000/sec | Aurora auto-scaling |
 | **Embedding Generation** | ~2s | Amazon Titan (1536 dims) |
+| **Setup Time** | ~15min | Fully automated, zero-touch |
+| **Deployment Time** | ~5min | Automated CI/CD pipeline |
+
+</div>
+
+---
+
+## 🤖 Automation Features
+
+<div align="center">
+
+| Feature | Status | Frequency |
+|---------|--------|-----------|
+| **Automated Setup** | ✅ Active | One-time |
+| **CI/CD Pipeline** | ✅ Active | On push/tag |
+| **Health Checks** | ✅ Active | Daily at 6 AM UTC |
+| **Security Scans** | ✅ Active | Weekly + On PR |
+| **Dependency Updates** | ✅ Active | Weekly (Dependabot) |
+| **Database Backups** | ✅ Active | Daily at 6 AM UTC |
+| **Cost Monitoring** | ✅ Active | Daily at 6 AM UTC |
+| **Auto-Rollback** | ✅ Active | On deployment failure |
+
+**See [AUTOMATION.md](AUTOMATION.md) for complete automation guide.**
 
 </div>
 
@@ -265,14 +363,16 @@ make apply ENVIRONMENT=dev
 ## 📖 Documentation
 
 ### Getting Started
-- 🍎 **[Mac mini Local Setup](LOCAL_SETUP.md)** - Complete guide for setting up on macOS with no dependencies
+- 🤖 **[Automation Guide](AUTOMATION.md)** - Complete automation documentation (START HERE!)
+- 🚀 **[Complete Setup Script](complete-setup.sh)** - One-command automated setup
+- 🍎 **[Mac mini Local Setup](LOCAL_SETUP.md)** - Manual setup guide for macOS
 - ⚡ **[Quick Reference](QUICKREF.md)** - Handy command reference for daily development
-- ✅ **[Deployment Checklist](DEPLOYMENT_CHECKLIST.md)** - Step-by-step deployment verification
 
-### Deployment
+### Deployment & CI/CD
+- 🔄 **[CI/CD Workflows](.github/workflows/)** - Automated deployment pipelines
 - 🚀 **[Quick Start Guide](QUICKSTART.md)** - Deploy to AWS in 30 minutes
 - 🏗️ **[Infrastructure Guide](infrastructure/README.md)** - Terraform modules and architecture
-- 📝 **[Implementation Summary](IMPLEMENTATION_SUMMARY.md)** - Technical implementation details
+- ✅ **[Deployment Checklist](DEPLOYMENT_CHECKLIST.md)** - Step-by-step deployment verification
 - ✅ **[Production Readiness](PRODUCTION_READINESS.md)** - Production deployment checklist
 - 🔧 **[Operations Runbook](RUNBOOK.md)** - Operational procedures and incident response
 

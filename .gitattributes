@@ -1,0 +1,34 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Shell scripts
+*.sh text eol=lf
+
+# YAML files
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Markdown files
+*.md text eol=lf
+
+# JavaScript/TypeScript
+*.js text eol=lf
+*.ts text eol=lf
+*.json text eol=lf
+
+# Python
+*.py text eol=lf
+
+# SQL
+*.sql text eol=lf
+
+# Terraform
+*.tf text eol=lf
+*.tfvars text eol=lf
+
+# Make
+Makefile text eol=lf
+
+# Docker
+Dockerfile text eol=lf
+docker-compose.yml text eol=lf
