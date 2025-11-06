@@ -14,24 +14,24 @@ jobs:
   lint-and-test:
     name: Lint and Test
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: 'infrastructure/lambda/*/package-lock.json'
-      
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
-      
+
       - name: Install Node.js dependencies
         run: |
           for dir in infrastructure/lambda/*/; do
@@ -40,7 +40,7 @@ jobs:
               (cd "$dir" && npm ci)
             fi
           done
-      
+
       - name: Install Python dependencies
         run: |
           for dir in infrastructure/lambda/*/; do
@@ -49,7 +49,7 @@ jobs:
               pip install -r "${dir}requirements.txt"
             fi
           done
-      
+
       - name: Lint JavaScript/TypeScript
         run: |
           for dir in infrastructure/lambda/*/; do
@@ -58,23 +58,23 @@ jobs:
               (cd "$dir" && npm run lint || true)
             fi
           done
-      
+
       - name: Run tests
         run: |
           echo "Running tests..."
           # Add test commands here when tests are implemented
           echo "Test infrastructure not yet implemented"
-      
+
       - name: Validate Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: latest
-      
+
       - name: Terraform Format Check
         run: |
           cd infrastructure/terraform
           terraform fmt -check -recursive || echo "Terraform formatting issues found"
-      
+
       - name: Terraform Validate
         run: |
           for env in infrastructure/terraform/environments/*/; do
@@ -85,11 +85,11 @@ jobs:
   security-scan:
     name: Security Scanning
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
@@ -97,13 +97,13 @@ jobs:
           scan-ref: '.'
           format: 'sarif'
           output: 'trivy-results.sarif'
-      
+
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
-      
+
       - name: Check for secrets
         uses: trufflesecurity/trufflehog@main
         with:

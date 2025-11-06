@@ -14,11 +14,11 @@ jobs:
     name: Check Deployment Health
     runs-on: ubuntu-latest
     if: github.event.workflow_run.conclusion == 'success'
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Determine environment
         id: env
         run: |
@@ -29,25 +29,25 @@ jobs:
           else
             echo "environment=staging" >> $GITHUB_OUTPUT
           fi
-      
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets[format('AWS_ACCESS_KEY_ID_{0}', steps.env.outputs.environment == 'production' && 'PROD' || upper(steps.env.outputs.environment))] }}
           aws-secret-access-key: ${{ secrets[format('AWS_SECRET_ACCESS_KEY_{0}', steps.env.outputs.environment == 'production' && 'PROD' || upper(steps.env.outputs.environment))] }}
           aws-region: ${{ env.AWS_REGION }}
-      
+
       - name: Wait for stabilization
         run: |
           echo "Waiting 5 minutes for deployment to stabilize..."
           sleep 300
-      
+
       - name: Check Lambda error rate
         id: lambda_check
         run: |
           echo "Checking Lambda error rates..."
           FUNCTIONS=$(aws lambda list-functions --query "Functions[?starts_with(FunctionName, 'loglineos-')].FunctionName" --output text)
-          
+
           ERROR_FOUND=false
           for func in $FUNCTIONS; do
             ERRORS=$(aws cloudwatch get-metric-statistics \
@@ -60,21 +60,21 @@ jobs:
               --period 300 \
               --query 'Datapoints[0].Sum' \
               --output text)
-            
+
             if [ "$ERRORS" != "None" ] && [ $(echo "$ERRORS > 10" | bc -l) -eq 1 ]; then
               echo "⚠️ High error rate detected in $func: $ERRORS errors"
               ERROR_FOUND=true
             fi
           done
-          
+
           echo "error_found=$ERROR_FOUND" >> $GITHUB_OUTPUT
-      
+
       - name: Check API Gateway errors
         id: api_check
         run: |
           echo "Checking API Gateway error rates..."
           APIS=$(aws apigatewayv2 get-apis --query "Items[?starts_with(Name, 'loglineos')].ApiId" --output text)
-          
+
           ERROR_FOUND=false
           for api in $APIS; do
             ERRORS=$(aws cloudwatch get-metric-statistics \
@@ -87,15 +87,15 @@ jobs:
               --period 300 \
               --query 'Datapoints[0].Sum' \
               --output text)
-            
+
             if [ "$ERRORS" != "None" ] && [ $(echo "$ERRORS > 10" | bc -l) -eq 1 ]; then
               echo "⚠️ High error rate detected in API $api: $ERRORS errors"
               ERROR_FOUND=true
             fi
           done
-          
+
           echo "error_found=$ERROR_FOUND" >> $GITHUB_OUTPUT
-      
+
       - name: Trigger rollback
         if: steps.lambda_check.outputs.error_found == 'true' || steps.api_check.outputs.error_found == 'true'
         uses: actions/github-script@v7
@@ -103,18 +103,18 @@ jobs:
           script: |
             const environment = '${{ steps.env.outputs.environment }}';
             console.log(`High error rate detected in ${environment}. Initiating rollback...`);
-            
+
             // Create an issue to track the rollback
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `🚨 Auto-Rollback Triggered for ${environment}`,
               body: `Automatic rollback initiated due to high error rates detected after deployment.
-              
+
               **Environment:** ${environment}
               **Workflow Run:** ${{ github.event.workflow_run.html_url }}
               **Time:** ${new Date().toISOString()}
-              
+
               **Next Steps:**
               1. Review the deployment logs
               2. Investigate the root cause
@@ -122,7 +122,7 @@ jobs:
               `,
               labels: ['incident', 'auto-rollback', environment]
             });
-      
+
       - name: Send notification
         if: steps.lambda_check.outputs.error_found == 'true' || steps.api_check.outputs.error_found == 'true'
         run: |

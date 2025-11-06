@@ -27,37 +27,37 @@ jobs:
     name: System Health Check
     runs-on: ubuntu-latest
     if: |
-      github.event.schedule == '0 6 * * *' || 
+      github.event.schedule == '0 6 * * *' ||
       github.event.inputs.task == 'health-check' ||
       github.event.inputs.task == 'all'
-    
+
     strategy:
       matrix:
         environment: [dev, staging, production]
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets[format('AWS_ACCESS_KEY_ID_{0}', matrix.environment == 'production' && 'PROD' || upper(matrix.environment))] }}
           aws-secret-access-key: ${{ secrets[format('AWS_SECRET_ACCESS_KEY_{0}', matrix.environment == 'production' && 'PROD' || upper(matrix.environment))] }}
           aws-region: ${{ env.AWS_REGION }}
-      
+
       - name: Check Lambda functions
         run: |
           echo "Checking Lambda functions in ${{ matrix.environment }}..."
           aws lambda list-functions --query "Functions[?starts_with(FunctionName, 'loglineos')].{Name:FunctionName,State:State}" --output table
-      
+
       - name: Check RDS status
         run: |
           echo "Checking RDS instances in ${{ matrix.environment }}..."
           aws rds describe-db-instances \
             --query "DBInstances[?starts_with(DBInstanceIdentifier, 'loglineos')].{ID:DBInstanceIdentifier,Status:DBInstanceStatus}" \
             --output table || echo "No RDS instances found"
-      
+
       - name: Check CloudWatch alarms
         run: |
           echo "Checking CloudWatch alarms in ${{ matrix.environment }}..."
@@ -66,7 +66,7 @@ jobs:
             --state-value ALARM \
             --query 'MetricAlarms[].AlarmName' \
             --output text)
-          
+
           if [ -n "$ALARMS" ]; then
             echo "⚠️ ALARMS IN ALARM STATE:"
             echo "$ALARMS"
@@ -74,13 +74,13 @@ jobs:
           else
             echo "✅ All alarms OK"
           fi
-      
+
       - name: Test API endpoints
         run: |
           echo "Testing API endpoints in ${{ matrix.environment }}..."
           # This would require storing the API URL or retrieving it from Terraform outputs
           echo "API endpoint testing requires runtime configuration"
-      
+
       - name: Report health status
         if: always()
         run: |
@@ -94,14 +94,14 @@ jobs:
     name: Automated Database Backup
     runs-on: ubuntu-latest
     if: |
-      github.event.schedule == '0 6 * * *' || 
+      github.event.schedule == '0 6 * * *' ||
       github.event.inputs.task == 'backup' ||
       github.event.inputs.task == 'all'
-    
+
     strategy:
       matrix:
         environment: [staging, production]
-    
+
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -109,25 +109,25 @@ jobs:
           aws-access-key-id: ${{ secrets[format('AWS_ACCESS_KEY_ID_{0}', matrix.environment == 'production' && 'PROD' || upper(matrix.environment))] }}
           aws-secret-access-key: ${{ secrets[format('AWS_SECRET_ACCESS_KEY_{0}', matrix.environment == 'production' && 'PROD' || upper(matrix.environment))] }}
           aws-region: ${{ env.AWS_REGION }}
-      
+
       - name: Create RDS snapshot
         run: |
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           DB_INSTANCE="loglineos-ledger-${{ matrix.environment }}"
           SNAPSHOT_ID="loglineos-automated-backup-${{ matrix.environment }}-${TIMESTAMP}"
-          
+
           echo "Creating snapshot: $SNAPSHOT_ID"
           aws rds create-db-snapshot \
             --db-instance-identifier "$DB_INSTANCE" \
             --db-snapshot-identifier "$SNAPSHOT_ID" \
             --tags Key=Environment,Value=${{ matrix.environment }} Key=Type,Value=automated Key=Date,Value=$(date +%Y-%m-%d) \
             || echo "Snapshot creation initiated or DB instance not found"
-      
+
       - name: Clean up old snapshots
         run: |
           echo "Cleaning up snapshots older than 30 days..."
           CUTOFF_DATE=$(date -u -d '30 days ago' +%Y-%m-%d)
-          
+
           aws rds describe-db-snapshots \
             --snapshot-type manual \
             --query "DBSnapshots[?starts_with(DBSnapshotIdentifier, 'loglineos-automated-backup-${{ matrix.environment }}') && SnapshotCreateTime<'$CUTOFF_DATE'].DBSnapshotIdentifier" \
@@ -142,14 +142,14 @@ jobs:
     name: Security Vulnerability Scan
     runs-on: ubuntu-latest
     if: |
-      github.event.schedule == '0 2 * * 1' || 
+      github.event.schedule == '0 2 * * 1' ||
       github.event.inputs.task == 'security-scan' ||
       github.event.inputs.task == 'all'
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
@@ -157,7 +157,7 @@ jobs:
           scan-ref: '.'
           format: 'table'
           severity: 'CRITICAL,HIGH'
-      
+
       - name: Run npm audit
         run: |
           for dir in infrastructure/lambda/*/; do
@@ -166,7 +166,7 @@ jobs:
               (cd "$dir" && npm audit --audit-level=moderate || true)
             fi
           done
-      
+
       - name: Run Python safety check
         run: |
           pip install safety
@@ -181,21 +181,21 @@ jobs:
     name: Automated Dependency Updates
     runs-on: ubuntu-latest
     if: |
-      github.event.schedule == '0 2 * * 1' || 
+      github.event.schedule == '0 2 * * 1' ||
       github.event.inputs.task == 'dependency-update' ||
       github.event.inputs.task == 'all'
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-      
+
       - name: Update Node.js dependencies
         run: |
           for dir in infrastructure/lambda/*/; do
@@ -204,12 +204,12 @@ jobs:
               (cd "$dir" && npm update && npm audit fix || true)
             fi
           done
-      
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+
       - name: Update Python dependencies
         run: |
           pip install pip-upgrader
@@ -219,7 +219,7 @@ jobs:
               (cd "$dir" && pip-upgrade || true)
             fi
           done
-      
+
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6
         with:
@@ -229,7 +229,7 @@ jobs:
           title: 'chore: Automated Dependency Updates'
           body: |
             Automated dependency updates generated by GitHub Actions.
-            
+
             Please review the changes and ensure all tests pass before merging.
           labels: dependencies,automated
 
@@ -237,9 +237,9 @@ jobs:
     name: AWS Cost Monitoring
     runs-on: ubuntu-latest
     if: |
-      github.event.schedule == '0 6 * * *' || 
+      github.event.schedule == '0 6 * * *' ||
       github.event.inputs.task == 'all'
-    
+
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -247,20 +247,20 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
           aws-region: ${{ env.AWS_REGION }}
-      
+
       - name: Get cost and usage
         run: |
           echo "Fetching AWS costs for the last 7 days..."
           START_DATE=$(date -u -d '7 days ago' +%Y-%m-%d)
           END_DATE=$(date -u +%Y-%m-%d)
-          
+
           aws ce get-cost-and-usage \
             --time-period Start=$START_DATE,End=$END_DATE \
             --granularity DAILY \
             --metrics UnblendedCost \
             --group-by Type=SERVICE \
             --output table
-      
+
       - name: Check for cost anomalies
         run: |
           echo "Checking for cost anomalies..."
