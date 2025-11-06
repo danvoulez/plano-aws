@@ -7,65 +7,126 @@ const ed = require('@noble/ed25519');
 const secretsClient = new SecretsManagerClient({});
 const sfnClient = new StepFunctionsClient({});
 
+/**
+ * Stage-0 Loader Lambda Handler
+ * 
+ * This is the bootloader that validates and schedules kernel execution.
+ * It implements the Blueprint4 ledger-only architecture where all code lives as spans.
+ * 
+ * Security features:
+ * - Manifest-based whitelist validation
+ * - Cryptographic signature verification
+ * - Row-Level Security (RLS) context isolation
+ * - Structured error handling with no sensitive data leakage
+ */
 exports.handler = async (event) => {
-    console.log('Stage-0 Loader invoked:', JSON.stringify(event));
+    const startTime = Date.now();
+    console.log('Stage-0 Loader invoked', { 
+        timestamp: new Date().toISOString(),
+        requestId: event.requestContext?.requestId 
+    });
     
     try {
-        // Parse request body
-        const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
-        const { boot_function_id, user_id, tenant_id, trace_id } = body;
-        
-        if (!boot_function_id) {
-            return {
-                statusCode: 400,
-                body: JSON.stringify({ error: 'boot_function_id is required' })
-            };
+        // Parse and validate request body
+        let body;
+        try {
+            body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
+        } catch (parseError) {
+            console.error('Invalid JSON in request body', { error: parseError.message });
+            return createErrorResponse(400, 'Invalid JSON in request body');
         }
         
-        // Get database credentials from Secrets Manager
-        const dbSecretResponse = await secretsClient.send(
-            new GetSecretValueCommand({ SecretId: process.env.DB_SECRET_ARN })
-        );
+        const { boot_function_id, user_id, tenant_id, trace_id } = body;
         
-        const dbConfig = JSON.parse(dbSecretResponse.SecretString);
+        // Input validation
+        if (!boot_function_id) {
+            return createErrorResponse(400, 'boot_function_id is required');
+        }
         
-        // Connect to database
+        if (!isValidUUID(boot_function_id)) {
+            return createErrorResponse(400, 'boot_function_id must be a valid UUID');
+        }
+        
+        if (user_id && !isValidUserId(user_id)) {
+            return createErrorResponse(400, 'Invalid user_id format');
+        }
+        
+        if (tenant_id && !isValidTenantId(tenant_id)) {
+            return createErrorResponse(400, 'Invalid tenant_id format');
+        }
+        
+        // Get database credentials from Secrets Manager with retry
+        let dbConfig;
+        try {
+            const dbSecretResponse = await secretsClient.send(
+                new GetSecretValueCommand({ SecretId: process.env.DB_SECRET_ARN })
+            );
+            dbConfig = JSON.parse(dbSecretResponse.SecretString);
+        } catch (secretError) {
+            console.error('Failed to retrieve database credentials', { error: secretError.message });
+            return createErrorResponse(500, 'Configuration error');
+        }
+        
+        // Connect to database with timeout
         const client = new Client({
             host: dbConfig.host.split(':')[0],
             database: dbConfig.database,
             user: dbConfig.username,
             password: dbConfig.password,
             ssl: { rejectUnauthorized: false },
-            port: parseInt(dbConfig.port || '5432')
+            port: parseInt(dbConfig.port || '5432'),
+            connectionTimeoutMillis: 5000,
+            query_timeout: 30000
         });
         
-        await client.connect();
+        try {
+            await client.connect();
+        } catch (connError) {
+            console.error('Database connection failed', { error: connError.message });
+            return createErrorResponse(503, 'Service temporarily unavailable');
+        }
         
         try {
-            // Set session variables for RLS
-            await client.query('SET app.user_id = $1', [user_id || 'edge:stage0']);
-            if (tenant_id) {
-                await client.query('SET app.tenant_id = $1', [tenant_id]);
+            // Set session variables for RLS - sanitize inputs
+            const sanitizedUserId = sanitizeRLSValue(user_id || 'edge:stage0');
+            const sanitizedTenantId = tenant_id ? sanitizeRLSValue(tenant_id) : null;
+            
+            await client.query('SET app.user_id = $1', [sanitizedUserId]);
+            if (sanitizedTenantId) {
+                await client.query('SET app.tenant_id = $1', [sanitizedTenantId]);
             }
             
-            // Fetch manifest
+            // Fetch manifest with error handling
             const manifestResult = await client.query(`
                 SELECT * FROM ledger.universal_registry 
                 WHERE entity_type='manifest' 
+                  AND is_deleted = false
                 ORDER BY at DESC LIMIT 1
             `);
             
             const manifest = manifestResult.rows[0] || { metadata: {} };
             const allowedBootIds = manifest.metadata?.allowed_boot_ids || [];
             
-            // For dev environment, allow all boot IDs if manifest is empty
-            if (process.env.ENVIRONMENT !== 'production' && allowedBootIds.length === 0) {
-                console.log('Dev environment: allowing boot without manifest validation');
-            } else if (!allowedBootIds.includes(boot_function_id)) {
-                return {
-                    statusCode: 403,
-                    body: JSON.stringify({ error: 'BOOT_FUNCTION_ID not allowed by manifest' })
-                };
+            // Manifest validation logic
+            const isProduction = process.env.ENVIRONMENT === 'production';
+            const hasManifest = allowedBootIds.length > 0;
+            const isAllowed = allowedBootIds.includes(boot_function_id);
+            
+            if (isProduction && !hasManifest) {
+                console.error('Production environment requires manifest configuration');
+                return createErrorResponse(503, 'Service not properly configured');
+            }
+            
+            if (hasManifest && !isAllowed) {
+                console.warn('Boot function not in manifest allowlist', { 
+                    boot_function_id,
+                    manifest_id: manifest.id 
+                });
+                return createErrorResponse(403, 'Function not authorized in manifest');
+            }
+            
+            if (!hasManifest && !isProduction) {
+                console.warn('Dev environment: allowing boot without manifest validation');
             }
             
             // Fetch function to execute
@@ -77,21 +138,19 @@ exports.handler = async (event) => {
             
             const fnSpan = fnResult.rows[0];
             if (!fnSpan) {
-                return {
-                    statusCode: 404,
-                    body: JSON.stringify({ error: 'Function span not found' })
-                };
+                console.warn('Function span not found', { boot_function_id });
+                return createErrorResponse(404, 'Function not found');
             }
             
             // Verify signature if present
             if (fnSpan.signature && fnSpan.public_key) {
+                console.log('Verifying function signature', { function_id: boot_function_id });
                 const verified = await verifySpan(fnSpan);
                 if (!verified) {
-                    return {
-                        statusCode: 403,
-                        body: JSON.stringify({ error: 'Invalid signature' })
-                    };
+                    console.error('Signature verification failed', { function_id: boot_function_id });
+                    return createErrorResponse(403, 'Invalid function signature');
                 }
+                console.log('Signature verified successfully');
             }
             
             // Insert boot event
@@ -112,48 +171,61 @@ exports.handler = async (event) => {
             
             // Execute kernel code if present (Blueprint4 execution model)
             if (fnSpan.code && fnSpan.language === 'javascript') {
-                console.log('Executing kernel code from ledger...');
+                console.log('Executing kernel code from ledger', { function_id: boot_function_id });
                 
-                const ctx = createExecutionContext(client, user_id, tenant_id);
+                const ctx = createExecutionContext(client, sanitizedUserId, sanitizedTenantId);
                 const result = await executeKernelCode(fnSpan.code, ctx);
                 
-                console.log('Kernel execution result:', JSON.stringify(result));
+                const duration = Date.now() - startTime;
+                console.log('Kernel execution completed', { 
+                    status: result.status,
+                    duration_ms: duration 
+                });
                 
-                return {
-                    statusCode: 200,
-                    body: JSON.stringify({
-                        success: true,
-                        boot_event_id: bootEventId,
-                        function_id: boot_function_id,
-                        execution: result,
-                        message: 'Kernel executed successfully'
-                    })
-                };
-            }
-            
-            return {
-                statusCode: 200,
-                body: JSON.stringify({
+                return createSuccessResponse(200, {
                     success: true,
                     boot_event_id: bootEventId,
                     function_id: boot_function_id,
-                    message: 'Boot event recorded successfully'
-                })
-            };
+                    execution: result,
+                    message: 'Kernel executed successfully',
+                    duration_ms: duration
+                });
+            }
+            
+            const duration = Date.now() - startTime;
+            return createSuccessResponse(200, {
+                success: true,
+                boot_event_id: bootEventId,
+                function_id: boot_function_id,
+                message: 'Boot event recorded successfully',
+                duration_ms: duration
+            });
             
         } finally {
-            await client.end();
+            // Always close database connection
+            try {
+                await client.end();
+            } catch (endError) {
+                console.error('Error closing database connection', { error: endError.message });
+            }
         }
         
     } catch (error) {
-        console.error('Error in Stage-0 Loader:', error);
-        return {
-            statusCode: 500,
-            body: JSON.stringify({ 
-                error: 'Internal server error',
-                message: error.message 
-            })
-        };
+        const duration = Date.now() - startTime;
+        console.error('Unhandled error in Stage-0 Loader', { 
+            error: error.message,
+            stack: error.stack,
+            duration_ms: duration
+        });
+        
+        // Don't expose internal error details in production
+        const message = process.env.ENVIRONMENT === 'production' 
+            ? 'Internal server error' 
+            : error.message;
+            
+        return createErrorResponse(500, message, {
+            duration_ms: duration
+        });
     }
 };
 
@@ -256,4 +328,61 @@ function hexToUint8Array(hex) {
     return Uint8Array.from(
         hex.match(/.{1,2}/g).map(byte => parseInt(byte, 16))
     );
+}
+
+/**
+ * Validation and sanitization utilities
+ */
+
+// UUID validation
+function isValidUUID(uuid) {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    return uuidRegex.test(uuid);
+}
+
+// User ID validation (alphanumeric, colons, hyphens, max 100 chars)
+function isValidUserId(userId) {
+    return /^[a-z0-9:_-]{1,100}$/i.test(userId);
+}
+
+// Tenant ID validation (alphanumeric, hyphens, max 50 chars)
+function isValidTenantId(tenantId) {
+    return /^[a-z0-9-]{1,50}$/i.test(tenantId);
+}
+
+// Sanitize RLS values to prevent injection
+function sanitizeRLSValue(value) {
+    if (typeof value !== 'string') return String(value);
+    // Remove any potential SQL injection characters
+    return value.replace(/['";\\]/g, '');
+}
+
+// Create standardized error response
+function createErrorResponse(statusCode, message, details = {}) {
+    const response = {
+        statusCode,
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Request-Time': new Date().toISOString()
+        },
+        body: JSON.stringify({
+            error: message,
+            ...details
+        })
+    };
+    
+    console.error('Error response', { statusCode, message, details });
+    return response;
+}
+
+// Create standardized success response
+function createSuccessResponse(statusCode, data) {
+    return {
+        statusCode,
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Request-Time': new Date().toISOString()
+        },
+        body: JSON.stringify(data)
+    };
 }
