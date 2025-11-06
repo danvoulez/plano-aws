@@ -46,7 +46,17 @@ chmod +x setup-macos.sh
 ./setup-macos.sh
 ```
 
-This will install:
+**Alternative: Interactive Helper Script**
+
+For a menu-driven experience:
+
+```bash
+./local-dev.sh
+```
+
+This provides an interactive menu for common tasks like starting services, initializing the database, viewing logs, etc.
+
+**Setup Script Installs:**
 - ✅ **Homebrew** - Package manager for macOS
 - ✅ **Docker Desktop** - Container runtime for local infrastructure
 - ✅ **Node.js 18+** - JavaScript runtime for Lambda functions
@@ -216,6 +226,36 @@ make local-down
 # Stop services and remove all data
 make local-down-clean
 ```
+
+### Helper Scripts
+
+For convenience, use these interactive scripts:
+
+#### Interactive Development Helper
+
+```bash
+./local-dev.sh
+```
+
+Provides a menu-driven interface for:
+- Starting/stopping services
+- Initializing database
+- Viewing logs
+- Running tests
+- And more
+
+#### Test Your Setup
+
+```bash
+./test-local-setup.sh
+```
+
+Validates that your local environment is properly configured by checking:
+- Docker is running
+- PostgreSQL and Redis containers are up
+- Database schema is initialized
+- Extensions are installed
+- All required commands are available
 
 ---
 
