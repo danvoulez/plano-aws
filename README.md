@@ -17,6 +17,19 @@
 
 ![LogLineOS Banner](https://via.placeholder.com/1200x400/1a1a1a/00ff88?text=LogLineOS+-+Autonomous+AI+Platform)
 
+---
+
+## 🍎 **New to Mac mini? Start Here!**
+
+Setting up on a fresh Mac mini with no dependencies?
+
+👉 **[Follow the Mac mini Setup Guide →](LOCAL_SETUP.md)**
+
+Or run our automated setup script:
+```bash
+./setup-macos.sh && make dev
+```
+
 </div>
 
 ---
@@ -246,6 +259,24 @@ make apply ENVIRONMENT=dev
 ![Titan](https://img.shields.io/badge/Amazon_Titan-FF9900?style=for-the-badge&logo=amazon-aws&logoColor=white)
 
 </div>
+
+---
+
+## 📖 Documentation
+
+### Getting Started
+- 🍎 **[Mac mini Local Setup](LOCAL_SETUP.md)** - Complete guide for setting up on macOS with no dependencies
+- ⚡ **[Quick Reference](QUICKREF.md)** - Handy command reference for daily development
+- ✅ **[Deployment Checklist](DEPLOYMENT_CHECKLIST.md)** - Step-by-step deployment verification
+
+### Deployment
+- 🚀 **[Quick Start Guide](QUICKSTART.md)** - Deploy to AWS in 30 minutes
+- 🏗️ **[Infrastructure Guide](infrastructure/README.md)** - Terraform modules and architecture
+- 📝 **[Implementation Summary](IMPLEMENTATION_SUMMARY.md)** - Technical implementation details
+
+### Architecture
+- 🌌 **[Complete Architecture](plano-aws.md)** - Full system design and specifications
+- 🧬 **[Blueprint 4](Blueprint4.md)** - System evolution and kernel design
 
 ---
 
